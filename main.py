@@ -2,6 +2,7 @@
 # All rights reserved.
 import argparse
 import datetime
+import os
 import random
 import numpy as np
 import time
@@ -237,6 +238,8 @@ def main(args):
                 wandb_kwargs['dir'] = str(Path(args.output_dir).resolve())
             else:
                 wandb_kwargs['tags'] = 'debug'
+            if os.path.exists(args.resume):
+                wandb_kwargs['resume'] = 'allow'
             wandb_run = wandb.init(**wandb_kwargs)
         except ImportError:
             print('Weights & Biases requested but not installed; run `pip install wandb` to enable logging.')
@@ -540,6 +543,8 @@ def main(args):
 
 
 if __name__ == '__main__':
+    # safe globals
+    torch.serialization.add_safe_globals([argparse.Namespace])
     parser = argparse.ArgumentParser('DeiT training and evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
     if args.output_dir:

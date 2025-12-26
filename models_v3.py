@@ -209,7 +209,9 @@ class mvit_models(nn.Module):
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
 
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
+        
         self.temporal_pos_embed = nn.Parameter(torch.zeros(num_frames,1, 1, embed_dim), requires_grad=True)
+        trunc_normal_(self.temporal_pos_embed, std=.02)
 
         dpr = [drop_path_rate for i in range(depth)]
         self.blocks = nn.ModuleList([
@@ -272,18 +274,19 @@ class mvit_models(nn.Module):
             pos_embed = resize_pos_embed(self.pos_embed, x, num_prefix_tokens=0)
             x = x + pos_embed.repeat(B, 1, 1)
             x = x + self.temporal_pos_embed[i]
+            
+            
+            # apply mask
+            N = x.shape[1]
+            L = int(N * (1 - self.mask_ratio))
+            if self.training and self.mask_ratio > 0.0:
+                _, order = torch.sort(torch.rand(B,N,device=x.device),dim=1)
+                order = order[:, :L]
+                x = gather(x,order)
+            
             x_list.append(x)
-        
-        x = torch.cat(x_list, dim=1)
-        # apply mask
-        N = x.shape[1]
-        L = int(N * (1 - self.mask_ratio))
-        if self.training and self.mask_ratio > 0.0:
-            _, order = torch.sort(torch.rand(B,N,device=x.device),dim=1)
-            order = order[:, :L]
-            x = gather(x,order)
         # concat cls token
-        x = torch.cat((cls_tokens, x), dim=1)
+        x = torch.cat([cls_tokens] + x_list, dim=1)
             
         for i , blk in enumerate(self.blocks):
             x = blk(x)
