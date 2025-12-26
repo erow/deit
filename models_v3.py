@@ -272,26 +272,29 @@ class mvit_models(nn.Module):
             pos_embed = resize_pos_embed(self.pos_embed, x, num_prefix_tokens=0)
             x = x + pos_embed.repeat(B, 1, 1)
             x = x + self.temporal_pos_embed[i]
-            
-            N = x.shape[1]
-            L = int(N * (1 - self.mask_ratio))
-            if self.training and self.mask_ratio > 0.0:
-                _, order = torch.sort(torch.rand(B,N,device=x.device),dim=1)
-                order = order[:, :L]
-                x = gather(x,order)
             x_list.append(x)
         
-        x = torch.cat([cls_tokens] + x_list, dim=1)
+        x = torch.cat(x_list, dim=1)
+        # apply mask
+        N = x.shape[1]
+        L = int(N * (1 - self.mask_ratio))
+        if self.training and self.mask_ratio > 0.0:
+            _, order = torch.sort(torch.rand(B,N,device=x.device),dim=1)
+            order = order[:, :L]
+            x = gather(x,order)
+        # concat cls token
+        x = torch.cat((cls_tokens, x), dim=1)
             
         for i , blk in enumerate(self.blocks):
             x = blk(x)
             
         x = self.norm(x)
-        return x[:, 0]
+        return x
 
     def forward(self, x):
 
         x = self.forward_features(x)
+        x = x[:, 0]
         
         if self.dropout_rate:
             x = F.dropout(x, p=float(self.dropout_rate), training=self.training)

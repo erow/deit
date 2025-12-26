@@ -225,7 +225,6 @@ def parse_model_args(raw_args):
 def main(args):
     utils.init_distributed_mode(args)
     model_extra_args = parse_model_args(args.model_args)
-    args.model_args = model_extra_args
     print(args)
     wandb_run = None
     if args.use_wandb and utils.is_main_process():
@@ -324,14 +323,15 @@ def main(args):
         img_size=args.input_size,
         **model_extra_args,
     )
+    print("model: ", model)
 
                     
     if args.finetune:
         if args.finetune.startswith('https'):
             checkpoint = torch.hub.load_state_dict_from_url(
-                args.finetune, map_location='cpu', check_hash=True)
+                args.finetune, map_location='cpu', check_hash=True, weights_only=False)
         else:
-            checkpoint = torch.load(args.finetune, map_location='cpu')
+            checkpoint = torch.load(args.finetune, map_location='cpu', weights_only=False)
 
         checkpoint_model = checkpoint['model']
         state_dict = model.state_dict()
