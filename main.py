@@ -26,7 +26,7 @@ from augment import new_data_aug_generator
 
 import models
 import models_v2
-
+import models_v3
 import utils
 
 
@@ -36,10 +36,12 @@ def get_args_parser():
     parser.add_argument('--epochs', default=300, type=int)
     parser.add_argument('--bce-loss', action='store_true')
     parser.add_argument('--unscale-lr', action='store_true')
+    parser.add_argument('--use-wandb', action='store_true',default=False)
 
     # Model parameters
     parser.add_argument('--model', default='deit_base_patch16_224', type=str, metavar='MODEL',
                         help='Name of model to train')
+    parser.add_argument('--model_args', type=json.loads, default={}, help='Additional model args as JSON dict')
     parser.add_argument('--input-size', default=224, type=int, help='images input size')
 
     parser.add_argument('--drop', type=float, default=0.0, metavar='PCT',
@@ -159,6 +161,7 @@ def get_args_parser():
     # Dataset parameters
     parser.add_argument('--data-path', default='/datasets01/imagenet_full_size/061417/', type=str,
                         help='dataset path')
+    parser.add_argument('--nb-classes', default=1000, type=int)
     parser.add_argument('--data-set', default='IMNET', choices=['CIFAR', 'IMNET', 'INAT', 'INAT19'],
                         type=str, help='Image Net dataset path')
     parser.add_argument('--inat-category', default='name',
@@ -225,6 +228,8 @@ def main(args):
 
     dataset_train, args.nb_classes = build_dataset(is_train=True, args=args)
     dataset_val, _ = build_dataset(is_train=False, args=args)
+    
+    print("Training data: ", dataset_train, "with transform: ", dataset_train.transform)
 
     if args.distributed:
         num_tasks = utils.get_world_size()
@@ -279,13 +284,14 @@ def main(args):
     print(f"Creating model: {args.model}")
     model = create_model(
         args.model,
-        pretrained=args.pretrained_21k or args.pretrained_1k,
+        pretrained=args.pretrained,
         pretrained_21k=args.pretrained_21k,
         num_classes=args.nb_classes,
         drop_rate=args.drop,
         drop_path_rate=args.drop_path,
         drop_block_rate=None,
-        img_size=args.input_size
+        img_size=args.input_size,
+        **args.model_args
     )
 
                     
