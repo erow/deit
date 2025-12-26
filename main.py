@@ -2,6 +2,7 @@
 # All rights reserved.
 import argparse
 import datetime
+import random
 import numpy as np
 import time
 import torch
@@ -152,6 +153,8 @@ def get_args_parser():
     # * Finetuning params
     parser.add_argument('--finetune', default='', help='finetune from checkpoint')
     parser.add_argument('--attn-only', action='store_true') 
+    parser.add_argument('--pretrained-21k', action='store_true',default=False)
+    parser.add_argument('--pretrained', action='store_true',default=False)
     
     # Dataset parameters
     parser.add_argument('--data-path', default='/datasets01/imagenet_full_size/061417/', type=str,
@@ -192,6 +195,20 @@ def main(args):
     utils.init_distributed_mode(args)
 
     print(args)
+    wandb_run = None
+    if args.use_wandb and utils.is_main_process():
+        try:
+            import wandb
+            wandb_kwargs = {
+                'config': vars(args),
+            }
+            if args.output_dir:
+                wandb_kwargs['dir'] = str(Path(args.output_dir).resolve())
+            else:
+                wandb_kwargs['tags'] = 'debug'
+            wandb_run = wandb.init(**wandb_kwargs)
+        except ImportError:
+            print('Weights & Biases requested but not installed; run `pip install wandb` to enable logging.')
 
     if args.distillation_type != 'none' and args.finetune and not args.eval:
         raise NotImplementedError("Finetuning with distillation not yet supported")
@@ -202,7 +219,7 @@ def main(args):
     seed = args.seed + utils.get_rank()
     torch.manual_seed(seed)
     np.random.seed(seed)
-    # random.seed(seed)
+    random.seed(seed)
 
     cudnn.benchmark = True
 
@@ -262,7 +279,8 @@ def main(args):
     print(f"Creating model: {args.model}")
     model = create_model(
         args.model,
-        pretrained=False,
+        pretrained=args.pretrained_21k or args.pretrained_1k,
+        pretrained_21k=args.pretrained_21k,
         num_classes=args.nb_classes,
         drop_rate=args.drop,
         drop_path_rate=args.drop_path,
@@ -468,10 +486,11 @@ def main(args):
                      **{f'test_{k}': v for k, v in test_stats.items()},
                      'epoch': epoch,
                      'n_parameters': n_parameters}
-        
-        
-        
-        
+
+        if wandb_run is not None:
+            wandb_run.log({**log_stats, 'max_accuracy': max_accuracy})
+
+
         if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
@@ -479,6 +498,8 @@ def main(args):
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
+    if wandb_run is not None:
+        wandb_run.finish()
 
 
 if __name__ == '__main__':
