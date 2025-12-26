@@ -8,6 +8,7 @@ import time
 import torch
 import torch.backends.cudnn as cudnn
 import json
+import ast
 
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from augment import new_data_aug_generator
 import models
 import models_v2
 import models_v3
+import models_v3
 import utils
 
 
@@ -41,7 +43,7 @@ def get_args_parser():
     # Model parameters
     parser.add_argument('--model', default='deit_base_patch16_224', type=str, metavar='MODEL',
                         help='Name of model to train')
-    parser.add_argument('--model_args', type=json.loads, default={}, help='Additional model args as JSON dict')
+    parser.add_argument('--model_args', nargs='*', default=[], help='Additional model args as key=value pairs')
     parser.add_argument('--input-size', default=224, type=int, help='images input size')
 
     parser.add_argument('--drop', type=float, default=0.0, metavar='PCT',
@@ -194,9 +196,36 @@ def get_args_parser():
     return parser
 
 
+def parse_model_args(raw_args):
+    """Convert a list of key=value strings into a dict, with best-effort typing."""
+    parsed = {}
+    if not raw_args:
+        return parsed
+    for item in raw_args:
+        if '=' not in item:
+            raise ValueError(f"Invalid model_arg '{item}'. Use key=value format.")
+        key, value = item.split('=', 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            raise ValueError(f"Invalid model_arg '{item}'. Key is empty.")
+        try:
+            # Try to parse JSON-like values (numbers, booleans, lists, dicts, etc.)
+            parsed_value = json.loads(value)
+        except Exception:
+            try:
+                # Fallback to Python literal parsing for things like tuples
+                parsed_value = ast.literal_eval(value)
+            except Exception:
+                parsed_value = value
+        parsed[key] = parsed_value
+    return parsed
+
+
 def main(args):
     utils.init_distributed_mode(args)
-
+    model_extra_args = parse_model_args(args.model_args)
+    args.model_args = model_extra_args
     print(args)
     wandb_run = None
     if args.use_wandb and utils.is_main_process():
@@ -216,6 +245,7 @@ def main(args):
     if args.distillation_type != 'none' and args.finetune and not args.eval:
         raise NotImplementedError("Finetuning with distillation not yet supported")
 
+    torch.distributed.barrier()
     device = torch.device(args.device)
 
     # fix the seed for reproducibility
@@ -282,6 +312,7 @@ def main(args):
             label_smoothing=args.smoothing, num_classes=args.nb_classes)
 
     print(f"Creating model: {args.model}")
+    
     model = create_model(
         args.model,
         pretrained=args.pretrained,
@@ -291,7 +322,7 @@ def main(args):
         drop_path_rate=args.drop_path,
         drop_block_rate=None,
         img_size=args.input_size,
-        **args.model_args
+        **model_extra_args,
     )
 
                     
@@ -488,8 +519,8 @@ def main(args):
             
         print(f'Max accuracy: {max_accuracy:.2f}%')
 
-        log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                     **{f'test_{k}': v for k, v in test_stats.items()},
+        log_stats = {**{f'train/{k}': v for k, v in train_stats.items()},
+                     **{f'test/{k}': v for k, v in test_stats.items()},
                      'epoch': epoch,
                      'n_parameters': n_parameters}
 
