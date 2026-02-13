@@ -57,6 +57,7 @@ def get_args_parser():
     parser.set_defaults(model_ema=True)
     parser.add_argument('--model-ema-decay', type=float, default=0.99996, help='')
     parser.add_argument('--model-ema-force-cpu', action='store_true', default=False, help='')
+    parser.add_argument('--comopiled', action='store_true',default=False)
 
     # Optimizer parameters
     parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER',
@@ -337,6 +338,8 @@ def main(args):
             checkpoint = torch.load(args.finetune, map_location='cpu', weights_only=False)
 
         checkpoint_model = checkpoint['model']
+        checkpoint_model = {k.replace('module.',''):v for k,v in checkpoint_model.items()}
+        checkpoint_model = {k.replace('_orig_mod.',''):v for k,v in checkpoint_model.items()}
         state_dict = model.state_dict()
         for k in ['head.weight', 'head.bias', 'head_dist.weight', 'head_dist.bias']:
             if k in checkpoint_model and checkpoint_model[k].shape != state_dict[k].shape:
@@ -388,6 +391,8 @@ def main(args):
             print('no patch embed')
             
     model.to(device)
+    if args.comopiled:
+        model = torch.compile(model)
 
     model_ema = None
     if args.model_ema:
@@ -502,31 +507,37 @@ def main(args):
                 }, checkpoint_path)
              
 
-        test_stats = evaluate(data_loader_val, model, device)
-        print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
+        if epoch % 5 == 0:
+            test_stats = evaluate(data_loader_val, model, device)
+            print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
         
-        if max_accuracy < test_stats["acc1"]:
-            max_accuracy = test_stats["acc1"]
-            if args.output_dir:
-                checkpoint_paths = [output_dir / 'best_checkpoint.pth']
-                for checkpoint_path in checkpoint_paths:
-                    utils.save_on_master({
-                        'model': model_without_ddp.state_dict(),
-                        'optimizer': optimizer.state_dict(),
-                        'lr_scheduler': lr_scheduler.state_dict(),
+        
+            if max_accuracy < test_stats["acc1"]:
+                max_accuracy = test_stats["acc1"]
+                if args.output_dir:
+                    checkpoint_paths = [output_dir / 'best_checkpoint.pth']
+                    for checkpoint_path in checkpoint_paths:
+                        utils.save_on_master({
+                            'model': model_without_ddp.state_dict(),
+                            'optimizer': optimizer.state_dict(),
+                            'lr_scheduler': lr_scheduler.state_dict(),
+                            'epoch': epoch,
+                            'model_ema': get_state_dict(model_ema),
+                            'scaler': loss_scaler.state_dict(),
+                            'args': args,
+                        }, checkpoint_path)
+                
+            print(f'Max accuracy: {max_accuracy:.2f}%')
+
+            log_stats = {**{f'train/{k}': v for k, v in train_stats.items()},
+                        **{f'test/{k}': v for k, v in test_stats.items()},
                         'epoch': epoch,
-                        'model_ema': get_state_dict(model_ema),
-                        'scaler': loss_scaler.state_dict(),
-                        'args': args,
-                    }, checkpoint_path)
+                        'n_parameters': n_parameters}
+        else:
+            log_stats = {**{f'train/{k}': v for k, v in train_stats.items()},
+                        'epoch': epoch,
+                        'n_parameters': n_parameters}
             
-        print(f'Max accuracy: {max_accuracy:.2f}%')
-
-        log_stats = {**{f'train/{k}': v for k, v in train_stats.items()},
-                     **{f'test/{k}': v for k, v in test_stats.items()},
-                     'epoch': epoch,
-                     'n_parameters': n_parameters}
-
         if wandb_run is not None:
             wandb_run.log({**log_stats, 'max_accuracy': max_accuracy})
 
